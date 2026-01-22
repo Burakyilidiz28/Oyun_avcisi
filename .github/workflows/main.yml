@@ -2,8 +2,9 @@ name: Game Deals Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
+    # Her 30 dakikada bir çalışır (15 dk yerine 30 dk hem güvenli hem hızlıdır)
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Manuel çalıştırma butonu ekler
 
 jobs:
   build:
@@ -30,7 +31,8 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          # sent_games.txt yoksa oluştur, varsa dokunma
           touch sent_games.txt
           git add sent_games.txt
-          git commit -m "Update sent games list" || exit 0
-          git push
+          # Sadece dosya değiştiyse commit yap
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update sent games list" && git push)
