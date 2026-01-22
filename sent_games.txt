@@ -1,9 +1,5 @@
---- 🏆 BULUNAN OYUNLAR ---
+--- 💰 TOPLAM KAZANÇ ---
+349.00 TL
 
---- 💰 TOPLAM TASARRUF ---
-0.00 TL
-
---- 🔍 PLATFORM DURUMU ---
-Epic Games: ❌
-
-Son Tarama: 22-01-2026 21:04
+--- 🏆 BUGÜNE KADAR BULUNAN OYUNLAR ---
+Rustler - Grand Theft Horse | 349.00 TL (ID:3d10f32b87b94b769524cd44a12e634a) [22-01-2026]
