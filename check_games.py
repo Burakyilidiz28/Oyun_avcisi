@@ -6,8 +6,6 @@ from datetime import datetime
 
 SENT_GAMES_FILE = "sent_games.txt"
 
-# ---------------- UTILS ----------------
-
 def escape_md(text):
     if not text: return ""
     return re.sub(r'([_*[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
@@ -16,32 +14,22 @@ def clean_title(title):
     return title.replace("&amp;", "&").replace("&quot;", '"').replace("&lt;", "<").replace("&gt;", ">")
 
 def find_direct_link(game_name, platform, reddit_link):
-    """
-    Oyun ismini temizler ve ilgili mağazanın doğrudan arama/ürün sayfasına yönlendirir.
-    """
-    # Başlıktaki gereksiz ibareleri temizle
-    clean_name = re.sub(r'\[.*?\]|\(.*?\)|\b(GOG|Prime|Steam|PSA|Amazon|Epic|Free|Giveaway)\b', '', game_name, flags=re.IGNORECASE).strip()
-    # URL uyumlu hale getir
+    clean_name = re.sub(r'\[.*?\]|\(.*?\)|\b(GOG|Prime|Steam|PSA|Amazon|Epic|Free|Giveaway|complimentary|with)\b', '', game_name, flags=re.IGNORECASE).strip()
     search_query = clean_name.replace(' ', '+')
     
     p_up = platform.upper()
+    t_up = game_name.upper()
+    
+    # Özel Prime/Amazon Araması
+    if "PRIME" in t_up or "AMAZON" in t_up:
+        return f"https://www.google.com/search?q={search_query}+Amazon+Prime+Code"
     
     if "STEAM" in p_up:
         return f"https://store.steampowered.com/search/?term={search_query}"
-    
     elif "EPIC" in p_up:
         return f"https://store.epicgames.com/tr/browse?q={search_query}"
-    
     elif "GOG" in p_up:
         return f"https://www.gog.com/en/games?query={search_query}"
-    
-    elif "PRIME" in p_up or "AMAZON" in p_up:
-        # Prime Gaming'de doğrudan arama linki olmadığı için en azından 
-        # Reddit linkini veriyoruz ki kullanıcı talimatları okuyabilsin (ana sayfadan daha iyidir)
-        return reddit_link 
-    
-    elif "ITCH" in p_up:
-        return f"https://itch.io/search?q={search_query}"
     
     return reddit_link
 
@@ -58,15 +46,12 @@ def get_epic_image(game_name):
     except: pass
     return ""
 
-# ---------------- TELEGRAM ----------------
-
 def send_telegram(message, game_url, platform_name, image_url=""):
     token = os.environ.get('TELEGRAM_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
     if not token or not chat_id: return False
 
-    # Buton metni daha net
-    button_text = f"🎮 {platform_name} Mağazasında Gör"
+    button_text = "🎁 Kodu Al / Mağazaya Git"
     reply_markup = {"inline_keyboard": [[{"text": button_text, "url": game_url}]]}
     
     endpoint = "sendPhoto" if image_url else "sendMessage"
@@ -83,8 +68,6 @@ def send_telegram(message, game_url, platform_name, image_url=""):
         r = requests.post(url, data=payload, timeout=12)
         return r.status_code == 200
     except: return False
-
-# ---------------- STORAGE ----------------
 
 def parse_old_data():
     games = []
@@ -112,8 +95,6 @@ def update_txt_report(games, statuses, total_tl, total_usd, raw_titles):
         f.write("\n--- 📝 REDDIT'TEN OKUNAN SON BAŞLIKLAR (RSS) ---\n")
         for t in raw_titles: f.write(f"- {t}\n")
 
-# ---------------- SCANNER ----------------
-
 def check_games():
     existing_games, total_tl, total_usd = parse_old_data()
     existing_ids = [g["id"] for g in existing_games]
@@ -138,7 +119,7 @@ def check_games():
                     statuses["Epic Games"] = "✅"
     except: statuses["Epic Games"] = "⚠️"
 
-    # 2. REDDIT RSS (Nokta Atışı Link Sistemi)
+    # 2. REDDIT RSS
     try:
         rss_url = "https://www.reddit.com/r/FreeGameFindings/new.rss"
         api_url = f"https://api.rss2json.com/v1/api.json?rss_url={rss_url}"
@@ -155,16 +136,13 @@ def check_games():
                 game_id = f"rss_{item.get('guid', '').split('/')[-1]}"
                 if game_id in existing_ids: continue
 
-                # Platform tespiti
                 platform = "Steam"
                 for p in ["GOG", "UBISOFT", "EA", "PRIME", "ITCH", "MICROSOFT", "EPIC"]:
                     if p in t_up: platform = p.capitalize(); break
 
-                # NOKTA ATIŞI LINK: Mağaza içinde oyunun ismini aratan link oluştur
                 final_link = find_direct_link(title_raw, platform, item.get("link", ""))
-                
                 img = get_epic_image(title_raw)
-                msg = f"**[{escape_md(title_raw)}]**\n\n💰 Fiyatı: *Ücretsiz*\n🎮 Platform: *{escape_md(platform)}*\n\n👇 Mağaza Sayfasına Git"
+                msg = f"**[{escape_md(title_raw)}]**\n\n💰 Fiyatı: *Ücretsiz*\n🎮 Platform: *{escape_md(platform)}*\n\n👇 Fırsatı Yakala"
                 
                 if send_telegram(msg, final_link, platform, img):
                     existing_games.append({"full_line": f"{title_raw} | 0.00 $ (ID:{game_id}) [{datetime.now().strftime('%d-%m-%Y')}]", "id": game_id})
