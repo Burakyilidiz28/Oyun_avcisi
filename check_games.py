@@ -177,7 +177,7 @@ def check_games():
                 t_raw = data["title"]
                 
                 # Filtre: Başlıkta Bedava ibaresi var mı?
-                if any(word in t_raw.upper() for word in ["FREE", "100%", "GIVEAWAY"]):
+                if any(word in t_raw.upper() for word in ["FREE", "100%", "GIVEAWAY", "PRIME", "COMPLIMENTARY"]):
                     game_id = f"reddit_{data['id']}"
                     if game_id in existing_ids: continue
 
