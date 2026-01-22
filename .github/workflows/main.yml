@@ -1,0 +1,23 @@
+name: Epic Games Check
+on:
+  schedule:
+    - cron: '10 16 * * 4' # Her Perşembe Türkiye saatiyle 19:10'da çalışır
+  workflow_dispatch: # Elinle test etmek istersen diye
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run script
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python check_games.py
