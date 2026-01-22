@@ -2,154 +2,175 @@ import requests
 import os
 import json
 import re
-import time
 from datetime import datetime
 
 SENT_GAMES_FILE = "sent_games.txt"
 
-def get_epic_image_by_name(game_name):
-    clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', game_name).strip()
-    search_url = f"https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?q={clean_name}&locale=tr&country=TR&allowCountries=TR"
-    try:
-        response = requests.get(search_url, timeout=5).json()
-        elements = response['data']['Catalog']['searchStore']['elements']
-        if elements:
-            for img in elements[0].get('keyImages', []):
-                if img.get('type') in ['OfferImageWide', 'Thumbnail']:
-                    return img.get('url')
-    except: return ""
-    return ""
+# ---------------- UTILS ----------------
+
+def escape_md(text):
+    """Telegram Markdown için güvenli hale getirir."""
+    return re.sub(r'([_*[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+
+# ---------------- TELEGRAM ----------------
 
 def send_telegram(message, game_url, platform_name, image_url=""):
     token = os.environ.get('TELEGRAM_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-    if not token or not chat_id: return False
+    if not token or not chat_id:
+        return False
 
-    reply_markup = {"inline_keyboard": [[{"text": f"🎮 Kütüphanene Ekle [{platform_name}]", "url": game_url}]]}
+    reply_markup = {
+        "inline_keyboard": [[
+            {"text": f"🎮 Kütüphanene Ekle [{platform_name}]", "url": game_url}
+        ]]
+    }
+
     endpoint = "sendPhoto" if image_url else "sendMessage"
     url = f"https://api.telegram.org/bot{token}/{endpoint}"
-    
-    payload = {'chat_id': chat_id, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(reply_markup)}
+
+    payload = {
+        "chat_id": chat_id,
+        "parse_mode": "MarkdownV2",
+        "reply_markup": json.dumps(reply_markup)
+    }
+
     if image_url:
-        payload['photo'] = image_url
-        payload['caption'] = message
+        payload["photo"] = image_url
+        payload["caption"] = message
     else:
-        payload['text'] = message
+        payload["text"] = message
 
     try:
         r = requests.post(url, data=payload, timeout=10)
         return r.status_code == 200
-    except: return False
+    except:
+        return False
+
+# ---------------- STORAGE ----------------
 
 def parse_old_data():
-    """Mevcut txt dosyasındaki oyunları ve tasarrufu okur."""
     games = []
-    if os.path.exists(SENT_GAMES_FILE):
-        with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
-            content = f.read()
-            # ID'leri ve oyun satırlarını yakala
-            pattern = r"^(.*?) \| (.*?)(?: \((ID:.*?)\)) \[.*?\]"
-            for line in content.split('\n'):
-                match = re.search(pattern, line)
-                if match:
-                    games.append({
-                        'full_line': line,
-                        'id': match.group(3),
-                        'price_str': match.group(2)
-                    })
+    if not os.path.exists(SENT_GAMES_FILE):
+        return games
+
+    with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
+        for line in f.read().splitlines():
+            m = re.search(r"\(ID:(.*?)\)", line)
+            if m:
+                games.append({
+                    "full_line": line,
+                    "id": m.group(1)
+                })
     return games
 
-def update_txt_report(games_list, statuses):
-    """Txt dosyasını senin istediğin şık formatta baştan yazar."""
-    total_tl = 0.0
-    total_usd = 0.0
-    
-    for g in games_list:
-        p_str = g['price_str']
-        if "TL" in p_str:
-            try: total_tl += float(p_str.replace(" TL", ""))
-            except: pass
-        elif "$" in p_str:
-            try: total_usd += float(p_str.replace("$ ", "").replace("$", ""))
-            except: pass
-
-    now_str = datetime.now().strftime('%d %B %H:%M').replace('January', 'Ocak').replace('February', 'Şubat') # Basit ay çeviri
-
+def update_txt_report(games, statuses):
     with open(SENT_GAMES_FILE, "w", encoding="utf-8") as f:
-        f.write("--- 💰 TOPLAM TASARRUF ---\n")
-        f.write(f"{total_tl:.2f} TL\n")
-        f.write(f"${total_usd:.2f}\n\n")
-        
-        f.write("--- 🏆 BUGÜNE KADAR BULUNAN OYUNLAR ---\n")
-        for g in games_list:
+        f.write("--- 🏆 BULUNAN OYUNLAR ---\n")
+        for g in games:
             f.write(f"{g['full_line']}\n")
-        
-        f.write("\n--- 🔍 SON TARAMA BİLGİSİ ---\n")
-        f.write(f"Son Tarama Zamanı: {datetime.now().strftime('%d %B %H:%M')}\n\n")
+
+        f.write("\n--- 🔍 PLATFORM DURUMU ---\n")
         for platform, status in statuses.items():
             f.write(f"{platform}: {status}\n")
 
-def check_games():
-    existing_games = parse_old_data()
-    existing_ids = [g['id'] for g in existing_games]
-    statuses = {"Epic Games": "❌", "Steam": "❌"}
-    new_found = False
+        f.write(f"\nSon Tarama: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n")
 
-    # 1. EPIC GAMES KONTROL
+# ---------------- EPIC GAMES ----------------
+
+def check_epic(existing_ids, games, statuses):
     try:
-        url = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=tr&country=TR&allowCountries=TR"
+        url = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=tr&country=TR"
         res = requests.get(url, timeout=10).json()
         elements = res['data']['Catalog']['searchStore']['elements']
+
+        found_new = False
+
         for game in elements:
-            price_info = game.get('price', {}).get('totalPrice', {})
-            if price_info.get('discountPrice') == 0 and game.get('promotions'):
-                title = game['title']
-                game_id = f"ID:epic_{title.replace(' ', '_')}"
-                if game_id in existing_ids: continue
+            price = game.get("price", {}).get("totalPrice", {})
+            promos = game.get("promotions", {})
 
-                old_price = price_info.get('originalPrice', 0) / 100
-                img = next((i['url'] for i in game.get('keyImages', []) if i['type'] in ['OfferImageWide', 'Thumbnail']), "")
-                
-                # Telegram Formatı
-                msg = (f"**[{title}]**\n\n💰 **Fiyatı:** {old_price:.2f} TL\n"
-                       f"⏳ **Son Tarih:** Kampanya Aktif\n\n👇 **Hemen Al**")
-                
+            if price.get("discountPrice") == 0 and promos:
+                epic_id = game.get("id")
+                game_id = f"epic_{epic_id}"
+
+                if game_id in existing_ids:
+                    continue
+
+                title = escape_md(game["title"])
+                old_price = price.get("originalPrice", 0) / 100
+                img = next((i["url"] for i in game.get("keyImages", [])
+                            if i["type"] in ["OfferImageWide", "Thumbnail"]), "")
+
+                msg = (
+                    f"*{title}*\n\n"
+                    f"💰 Fiyatı: *{old_price:.2f} TL*\n"
+                    f"👇 Hemen Al"
+                )
+
                 if send_telegram(msg, "https://store.epicgames.com/tr/free-games", "Epic Games", img):
-                    existing_games.append({
-                        'full_line': f"{title} | {old_price:.2f} TL ({game_id}) [{datetime.now().strftime('%d-%m-%Y')}]",
-                        'id': game_id,
-                        'price_str': f"{old_price:.2f} TL"
+                    games.append({
+                        "full_line": f"{game['title']} | {old_price:.2f} TL (ID:{game_id}) [{datetime.now().strftime('%d-%m-%Y')}]",
+                        "id": game_id
                     })
-                    statuses["Epic Games"] = "✅"
-                    new_found = True
-    except: statuses["Epic Games"] = "⚠️"
+                    found_new = True
 
-    # 2. REDDIT (STEAM VB) KONTROL
+        statuses["Epic Games"] = "✅" if found_new else "❌"
+
+    except:
+        statuses["Epic Games"] = "⚠️"
+
+# ---------------- REDDIT (STEAM / DİĞER) ----------------
+
+def check_reddit(existing_ids, games, statuses):
     try:
         url = "https://www.reddit.com/r/FreeGameFindings/new.json?limit=10"
-        res = requests.get(url, headers={'User-agent': 'OyunBot'}, timeout=10).json()
-        for post in res['data']['children']:
-            data = post['data']
-            if "100%" in data['title'].upper() or "FREE" in data['title'].upper():
-                game_id = f"ID:ext_{data['id']}"
-                if game_id in existing_ids: continue
+        res = requests.get(url, headers={"User-Agent": "GameDealsBot"}, timeout=10).json()
 
-                img = get_epic_image_by_name(data['title'])
-                price_match = re.search(r"(\$|£|€)(\d+\.?\d*)", data['title'])
-                price_val = f"$ {price_match.group(2)}" if price_match else "Ücretsiz"
-                
-                msg = (f"**[{data['title']}]**\n\n💰 **Fiyatı:** {price_val}\n\n👇 **Hemen Al**")
-                
-                platform = "Steam" if "STEAM" in data['title'].upper() else "Mağaza"
-                if send_telegram(msg, data['url'], platform, img):
-                    existing_games.append({
-                        'full_line': f"{data['title']} | {price_val} ({game_id}) [{datetime.now().strftime('%d-%m-%Y')}]",
-                        'id': game_id,
-                        'price_str': price_val
-                    })
-                    statuses["Steam"] = "✅"
-                    new_found = True
-    except: statuses["Steam"] = "⚠️"
+        found_new = False
+
+        for post in res["data"]["children"]:
+            data = post["data"]
+            title_raw = data["title"]
+
+            if "FREE" not in title_raw.upper() and "100%" not in title_raw.upper():
+                continue
+
+            game_id = f"reddit_{data['id']}"
+            if game_id in existing_ids:
+                continue
+
+            title = escape_md(title_raw)
+            platform = "Steam" if "STEAM" in title_raw.upper() else "Other"
+
+            msg = f"*{title}*\n\n👇 Hemen Al"
+
+            if send_telegram(msg, data["url"], platform):
+                games.append({
+                    "full_line": f"{title_raw} | Ücretsiz (ID:{game_id}) [{datetime.now().strftime('%d-%m-%Y')}]",
+                    "id": game_id
+                })
+                found_new = True
+
+        statuses["Steam"] = "✅" if found_new else "❌"
+
+    except:
+        statuses["Steam"] = "⚠️"
+
+# ---------------- MAIN ----------------
+
+def check_games():
+    existing_games = parse_old_data()
+    existing_ids = [g["id"] for g in existing_games]
+
+    statuses = {
+        "Epic Games": "❌",
+        "Steam": "❌",
+        "Microsoft Store": "❌"
+    }
+
+    check_epic(existing_ids, existing_games, statuses)
+    check_reddit(existing_ids, existing_games, statuses)
 
     update_txt_report(existing_games, statuses)
 
