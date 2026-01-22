@@ -131,12 +131,3 @@ def send_telegram_photo(message, game_url, image_url):
     reply_markup = {"inline_keyboard": [[{"text": "📖 Oyunu Kütüphanene Ekle", "url": game_url}]]}
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
     payload = {'chat_id': chat_id, 'photo': image_url, 'caption': message, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(reply_markup)}
-    
-    try:
-        r = requests.post(url, data=payload)
-        return r.status_code == 200
-    except:
-        return False
-
-if __name__ == "__main__":
-    check_epic()
