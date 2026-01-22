@@ -15,7 +15,7 @@ def check_epic():
         if discount_price == 0 and game.get('promotions'):
             title = game['title']
             
-            # Kapak resmini al (Veya uygun olan ilk resmi seç)
+            # Kapak resmini seç
             image_url = ""
             for img in game.get('keyImages', []):
                 if img.get('type') == 'Thumbnail' or img.get('type') == 'OfferImageWide':
@@ -35,11 +35,11 @@ def check_epic():
             link = f"https://store.epicgames.com/tr/p/{slug}"
             fmt_original = f"{original_price/100:.2f} TL"
             
+            # Daha temiz ve ferah mesaj tasarımı
             msg = (
-                f"🎮 *YENİ ÜCRETSİZ OYUN!*\n\n"
-                f"🕹 *Oyun:* {title}\n"
-                f"💰 *Eski Fiyat:* {fmt_original}\n"
-                f"📅 *Hemen kütüphanene eklemeyi unutma!*"
+                f"🕹 *{title}*\n\n"
+                f"💰 ~~{fmt_original}~~  ➡️  *BEDAVA*\n\n"
+                f"⏳ Son şans kaçırmadan kütüphanene ekle!"
             )
             
             send_telegram_photo(msg, link, image_url)
@@ -50,11 +50,10 @@ def send_telegram_photo(message, game_url, image_url):
     
     reply_markup = {
         "inline_keyboard": [[
-            {"text": "🚀 Oyunu Kütüphanene Ekle", "url": game_url}
+            {"text": "🎮 Oyunu Kütüphanene Ekle", "url": game_url}
         ]]
     }
     
-    # Fotoğraflı mesaj gönderme
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
     payload = {
         'chat_id': chat_id,
