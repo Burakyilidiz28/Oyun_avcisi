@@ -2,7 +2,5 @@
 
 --- 🔍 PLATFORM DURUMU ---
 Epic Games: ❌
-Steam: ⚠️
-Microsoft Store: ❌
 
-Son Tarama: 22-01-2026 19:40
+Son Tarama: 22-01-2026 19:42
