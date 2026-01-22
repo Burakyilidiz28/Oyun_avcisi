@@ -13,7 +13,6 @@ def escape_md(text):
     return re.sub(r'([_*[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
 def get_epic_image(game_name):
-    # İsmi temizle: Harold Halibut (GOG) -> Harold Halibut
     clean_name = re.sub(r'\[.*?\]|\(.*?\)|\b(GOG|Prime|Steam|PSA|Amazon)\b', '', game_name, flags=re.IGNORECASE).strip()
     search_url = f"https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?q={clean_name}&locale=tr&country=TR&allowCountries=TR"
     try:
@@ -46,14 +45,10 @@ def send_telegram(message, game_url, platform_name, image_url=""):
 
     try:
         r = requests.post(url, data=payload, timeout=12)
-        if r.status_code != 200:
-            print(f"!!! Telegram Hatası: {r.text}")
         return r.status_code == 200
-    except Exception as e:
-        print(f"!!! Telegram Bağlantı Hatası: {e}")
-        return False
+    except: return False
 
-# ---------------- STORAGE & REPORT ----------------
+# ---------------- STORAGE & LOGGING ----------------
 
 def parse_old_data():
     games = []
@@ -61,29 +56,32 @@ def parse_old_data():
     if os.path.exists(SENT_GAMES_FILE):
         with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
             content = f.read()
-            # Fiyatları bul
             tl_match = re.search(r"([\d.]+) TL", content)
             usd_match = re.search(r"\$([\d.]+)", content)
             if tl_match: total_tl = float(tl_match.group(1))
             if usd_match: total_usd = float(usd_match.group(1))
             
-            # Oyun ID'lerini topla
             f.seek(0)
             for line in f:
                 id_m = re.search(r"\(ID:(.*?)\)", line)
                 if id_m: games.append({"full_line": line.strip(), "id": id_m.group(1)})
     return games, total_tl, total_usd
 
-def update_txt_report(games, statuses, total_tl, total_usd):
+def update_txt_report(games, statuses, total_tl, total_usd, reddit_raw_titles):
     with open(SENT_GAMES_FILE, "w", encoding="utf-8") as f:
         f.write(f"--- 💰 TOPLAM TASARRUF ---\n{total_tl:.2f} TL\n${total_usd:.2f}\n\n")
         f.write("--- 🏆 BUGÜNE KADAR BULUNAN OYUNLAR ---\n")
         for g in games: f.write(f"{g['full_line']}\n")
         
-        # Senin istediğin formatta tarama bilgisi
-        now_str = datetime.now().strftime('%d-%m-%Y %H:%M')
-        f.write(f"\n--- 🔍 SON TARAMA BİLGİSİ ---\nSon Tarama Zamanı: {now_str}\n\n")
+        f.write(f"\n--- 🔍 SON TARAMA BİLGİSİ ---\nSon Tarama Zamanı: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n\n")
         for p, s in statuses.items(): f.write(f"{p}: {s}\n")
+        
+        # SİTEYE GİRİP GİRMEDİĞİNİ ANLAMAK İÇİN HAM VERİ LOGU
+        f.write("\n--- 📝 REDDIT'TEN OKUNAN SON BAŞLIKLAR (HAM VERİ) ---\n")
+        if not reddit_raw_titles:
+            f.write("Veri okunamadı veya Reddit engelledi.\n")
+        for title in reddit_raw_titles:
+            f.write(f"- {title}\n")
 
 # ---------------- SCANNER ----------------
 
@@ -91,6 +89,7 @@ def check_games():
     existing_games, total_tl, total_usd = parse_old_data()
     existing_ids = [g["id"] for g in existing_games]
     statuses = {"Epic Games": "❌", "Steam": "❌"}
+    reddit_raw_titles = [] # Ham başlıkları burada tutacağız
     
     # 1. EPIC GAMES
     try:
@@ -102,11 +101,9 @@ def check_games():
             if price_info.get("discountPrice") == 0 and promos and promos.get("promotionalOffers"):
                 game_id = f"epic_{game['id']}"
                 if game_id in existing_ids: continue
-                
                 title = game["title"]
                 old_price = price_info.get("originalPrice", 0) / 100
                 img = next((i["url"] for i in game.get("keyImages", []) if i["type"] in ["OfferImageWide", "Thumbnail"]), "")
-                
                 msg = f"**[{escape_md(title)}]**\n\n💰 Fiyatı: *{escape_md(f'{old_price:.2f} TL')}*\n\n👇 Hemen Al"
                 if send_telegram(msg, "https://store.epicgames.com/tr/free-games", "Epic Games", img):
                     total_tl += old_price
@@ -114,40 +111,42 @@ def check_games():
                     statuses["Epic Games"] = "✅"
     except: statuses["Epic Games"] = "⚠️"
 
-    # 2. REDDIT (PSA/PRIME DAHİL AGRESİF FİLTRE)
+    # 2. REDDIT (GELİŞTİRİLMİŞ LOGLAMA)
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        res = requests.get("https://www.reddit.com/r/FreeGameFindings/new.json?sort=new&limit=25", headers=headers, timeout=15)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
+        res = requests.get("https://www.reddit.com/r/FreeGameFindings/new.json?sort=new&limit=20", headers=headers, timeout=15)
         
         if res.status_code == 200:
             posts = res.json().get("data", {}).get("children", [])
             reddit_success = False
             for post in posts:
-                data = post["data"]
-                title_raw = data["title"]
-                t_up = title_raw.upper()
+                title_raw = post["data"]["title"]
+                reddit_raw_titles.append(title_raw) # LOGA EKLE
                 
-                # ÇOK GENİŞ FİLTRE
+                t_up = title_raw.upper()
                 keywords = ["FREE", "100%", "GIVEAWAY", "PRIME", "COMPLIMENTARY", "PSA", "AMAZON"]
                 if any(word in t_up for word in keywords):
-                    game_id = f"reddit_{data['id']}"
+                    game_id = f"reddit_{post['data']['id']}"
                     if game_id in existing_ids: continue
 
-                    print(f"Bulundu: {title_raw}") # Loglarda gör
                     img = get_epic_image(title_raw)
-                    platform = "Diğer"
-                    for p in ["STEAM", "GOG", "UBISOFT", "EA", "PRIME", "ITCH", "MICROSOFT"]:
+                    platform = "Steam"
+                    for p in ["GOG", "UBISOFT", "EA", "PRIME", "ITCH", "MICROSOFT"]:
                         if p in t_up: platform = p.capitalize(); break
 
                     msg = f"**[{escape_md(title_raw)}]**\n\n💰 Fiyatı: *Ücretsiz*\n🎮 Platform: *{escape_md(platform)}*\n\n👇 Hemen Al"
-                    if send_telegram(msg, data["url"], platform, img):
+                    if send_telegram(msg, post["data"]["url"], platform, img):
                         existing_games.append({"full_line": f"{title_raw} | 0.00 $ (ID:{game_id}) [{datetime.now().strftime('%d-%m-%Y')}]", "id": game_id})
                         reddit_success = True
             statuses["Steam"] = "✅" if reddit_success else "❌"
-        else: statuses["Steam"] = "⚠️"
-    except: statuses["Steam"] = "⚠️"
+        else:
+            reddit_raw_titles.append(f"HATA: Reddit {res.status_code} koduyla reddetti.")
+            statuses["Steam"] = "⚠️"
+    except Exception as e:
+        reddit_raw_titles.append(f"BAGLANTI HATASI: {str(e)}")
+        statuses["Steam"] = "⚠️"
 
-    update_txt_report(existing_games, statuses, total_tl, total_usd)
+    update_txt_report(existing_games, statuses, total_tl, total_usd, reddit_raw_titles)
 
 if __name__ == "__main__":
     check_games()
