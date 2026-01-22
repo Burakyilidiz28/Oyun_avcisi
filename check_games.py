@@ -3,10 +3,25 @@ import os
 import json
 from datetime import datetime
 
+# Hafıza dosyasının adı
+SENT_GAMES_FILE = "sent_games.txt"
+
+def get_sent_games():
+    if not os.path.exists(SENT_GAMES_FILE):
+        return []
+    with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
+        return f.read().splitlines()
+
+def add_to_sent_games(game_id):
+    with open(SENT_GAMES_FILE, "a", encoding="utf-8") as f:
+        f.write(game_id + "\n")
+
 def check_epic():
     url = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=tr&country=TR&allowCountries=TR"
     response = requests.get(url).json()
     games = response['data']['Catalog']['searchStore']['elements']
+    
+    sent_games = get_sent_games()
     
     gunler = {
         "Monday": "Pazartesi", "Tuesday": "Salı", "Wednesday": "Çarşamba",
@@ -22,11 +37,16 @@ def check_epic():
     for game in games:
         price_info = game['price']['totalPrice']
         discount_price = price_info['discountPrice']
-        original_price = price_info['originalPrice']
         
-        if discount_price == 0 and game.get('promotions'):
+        # Sadece ücretsiz ve promosyonu olanları al
+        if discount_price == 0 and game.get('promotions') and game['promotions']['promotionalOffers']:
             title = game['title']
+            game_id = game['id'] # Her oyunun benzersiz bir ID'si vardır
             
+            # EĞER BU OYUN DAHA ÖNCE GÖNDERİLDİYSE PAS GEÇ
+            if game_id in sent_games:
+                continue
+
             promo_info = game['promotions']['promotionalOffers'][0]['promotionalOffers'][0]
             end_date_str = promo_info['endDate']
             end_date = datetime.strptime(end_date_str, "%Y-%m-%dT%H:%M:%S.%fZ")
@@ -36,12 +56,11 @@ def check_epic():
             saat_dakika = end_date.strftime("%H:%M")
             gun_sayisi = end_date.strftime("%d")
             
-            # İstediğin yeni sıralama: Gün Ay Saat (Gün İsmi)
             bitis_metni = f"{gun_sayisi} {ay_adi} {saat_dakika} ({gun_adi})"
             
             image_url = ""
             for img in game.get('keyImages', []):
-                if img.get('type') == 'Thumbnail' or img.get('type') == 'OfferImageWide':
+                if img.get('type') in ['Thumbnail', 'OfferImageWide']:
                     image_url = img.get('url')
                     break
             
@@ -54,7 +73,7 @@ def check_epic():
             except: pass
                 
             link = f"https://store.epicgames.com/tr/p/{slug}"
-            fmt_original = f"{original_price/100:.2f} TL"
+            fmt_original = f"{price_info['originalPrice']/100:.2f} TL"
             
             msg = (
                 f"*{title}*\n\n"
@@ -63,11 +82,16 @@ def check_epic():
                 f"👇 *Hemen Al*"
             )
             
+            # Telegram'a gönder
             send_telegram_photo(msg, link, image_url)
+            # Hafızaya kaydet
+            add_to_sent_games(game_id)
 
 def send_telegram_photo(message, game_url, image_url):
-    token = os.environ['TELEGRAM_TOKEN']
-    chat_id = os.environ['TELEGRAM_CHAT_ID']
+    token = os.environ.get('TELEGRAM_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+    if not token or not chat_id: return
+    
     reply_markup = {"inline_keyboard": [[{"text": "📖 Oyunu Kütüphanene Ekle", "url": game_url}]]}
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
     payload = {'chat_id': chat_id, 'photo': image_url, 'caption': message, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(reply_markup)}
