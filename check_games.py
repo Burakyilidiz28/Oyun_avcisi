@@ -10,7 +10,6 @@ SENT_GAMES_FILE = "sent_games.txt"
 
 def get_epic_image_by_name(game_name):
     """Epic Games mağazasında isimle görsel arar."""
-    # İsimdeki [Steam] gibi etiketleri temizle
     clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', game_name).strip()
     search_url = f"https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?q={clean_name}&locale=tr&country=TR&allowCountries=TR"
     try:
@@ -33,7 +32,8 @@ def send_telegram(message, game_url, platform_name, image_url=""):
         print("HATA: Telegram Token veya Chat ID bulunamadı!")
         return False
 
-    reply_markup = {"inline_keyboard": [[{"text": f"📖 Oyunu Al [{platform_name}]", "url": game_url}]]}
+    # İSTEDİĞİN DİNAMİK BUTON YAPISI
+    reply_markup = {"inline_keyboard": [[{"text": f"🎮 Kütüphanene Ekle [{platform_name}]", "url": game_url}]]}
     
     if image_url:
         url = f"https://api.telegram.org/bot{token}/sendPhoto"
@@ -55,8 +55,6 @@ def send_telegram(message, game_url, platform_name, image_url=""):
     
     try:
         r = requests.post(url, data=payload, timeout=10)
-        if r.status_code != 200:
-            print(f"Telegram Hatası: {r.text}")
         return r.status_code == 200
     except Exception as e:
         print(f"Bağlantı Hatası: {e}")
@@ -80,12 +78,10 @@ def check_epic():
             price_info = game.get('price', {}).get('totalPrice', {})
             promotions = game.get('promotions')
             
-            # Ücretsiz mi ve kampanya var mı?
             if price_info.get('discountPrice') == 0 and promotions:
                 offers = promotions.get('promotionalOffers', [])
                 if not offers: continue
                 
-                # Aktif teklifi al
                 actual_offers = offers[0].get('promotionalOffers', [])
                 for offer in actual_offers:
                     title = game['title']
@@ -93,23 +89,22 @@ def check_epic():
                     
                     if game_id in content: continue
 
-                    # Bitiş Tarihi Formatı
                     end_date_raw = offer['endDate'].replace('Z', '+00:00')
                     end_dt = datetime.fromisoformat(end_date_raw)
-                    expiry_str = f"{end_dt.strftime('%d')} {months_tr.get(end_dt.strftime('%B'), 'Ocak')} {end_dt.strftime('%H:%M')} ({days_tr.get(end_dt.strftime('%A'), 'Gün')})"
+                    expiry_str = f"{end_dt.strftime('%d')} {months_tr.get(end_dt.strftime('%B'))} {end_dt.strftime('%H:%M')} ({days_tr.get(end_dt.strftime('%A'))})"
 
-                    # Görsel Çekme
                     image_url = ""
                     for img in game.get('keyImages', []):
-                        if img.get('type') in ['OfferImageWide', 'Thumbnail', 'DieselStoreFrontWide']:
+                        if img.get('type') in ['OfferImageWide', 'Thumbnail']:
                             image_url = img.get('url'); break
 
                     old_price = price_info.get('originalPrice', 0) / 100
                     
-                    message = (f"*[{title}]*\n\n"
-                               f"💰 *Eski Fiyat:* {old_price:.2f} TL\n\n"
-                               f"⏳ *Son Tarih:* {expiry_str}\n\n"
-                               f"🎮 Platform: Epic Games")
+                    # İSTEDİĞİN MESAJ FORMATI
+                    message = (f"**[{title}]**\n\n"
+                               f"💰 **Fiyatı:** {old_price:.2f} TL\n"
+                               f"⏳ **Son Tarih:** {expiry_str}\n\n"
+                               f"👇 **Hemen Al**")
                     
                     if send_telegram(message, "https://store.epicgames.com/tr/free-games", "Epic Games", image_url):
                         with open(SENT_GAMES_FILE, "a", encoding="utf-8") as f_app:
@@ -142,22 +137,20 @@ def check_reddit_sources():
                 game_id = f"ID:ext_{data['id']}"
                 if game_id in content: continue
 
-                # Hangi platform?
-                detected_platform = "Diğer"
+                detected_platform = "Mağaza"
                 for p in platforms:
                     if p.upper() in title_up:
                         detected_platform = p; break
                 
-                # Epic'te görsel var mı bak
                 image_url = get_epic_image_by_name(data['title'])
                 
-                # Fiyat tahmini (Reddit başlığından)
                 price_match = re.search(r"(\$|£|€)(\d+\.?\d*)", data['title'])
-                display_price = f"$ {price_match.group(2)}" if price_match else "Ücretsiz"
+                display_price = f"{price_match.group(1)} {price_match.group(2)}" if price_match else "Ücretsiz"
 
-                message = (f"*[{data['title']}]*\n\n"
-                           f"💰 *Eski Fiyat:* {display_price}\n\n"
-                           f"🎮 Platform: {detected_platform}")
+                # İSTEDİĞİN MESAJ FORMATI (REDDIT/DIĞER)
+                message = (f"**[{data['title']}]**\n\n"
+                           f"💰 **Fiyatı:** {display_price}\n\n"
+                           f"👇 **Hemen Al**")
 
                 if send_telegram(message, data['url'], detected_platform, image_url):
                     with open(SENT_GAMES_FILE, "a", encoding="utf-8") as f_app:
@@ -176,8 +169,8 @@ if __name__ == "__main__":
         with open(SENT_GAMES_FILE, "w", encoding="utf-8") as f:
             f.write("--- 🏆 OYUN AVIMIZ ---\n\n")
 
-    e_status, e_new = check_epic()
-    r_status, r_new = check_reddit_sources()
+    check_epic()
+    check_reddit_sources()
     
     duration = time.time() - start_time
-    print(f"Tarama Tamamlandı. Süre: {duration:.2f} saniye. Yeni Oyun: {e_new or r_new}")
+    print(f"Tarama Tamamlandı. Süre: {duration:.2f} saniye.")
