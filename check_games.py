@@ -12,12 +12,18 @@ def check_epic():
         discount_price = price_info['discountPrice']
         original_price = price_info['originalPrice']
         
-        # Sadece bedava olan ve promosyonu aktif olanları seç
         if discount_price == 0 and game.get('promotions'):
             title = game['title']
             
-            # Link oluşturma mantığı
-            slug = "free-games" # Varsayılan
+            # Kapak resmini al (Veya uygun olan ilk resmi seç)
+            image_url = ""
+            for img in game.get('keyImages', []):
+                if img.get('type') == 'Thumbnail' or img.get('type') == 'OfferImageWide':
+                    image_url = img.get('url')
+                    break
+            
+            # Link oluşturma
+            slug = "free-games"
             try:
                 if game.get('catalogNs', {}).get('mappings'):
                     slug = game['catalogNs']['mappings'][0]['pageSlug']
@@ -32,27 +38,28 @@ def check_epic():
             msg = (
                 f"🎮 *YENİ ÜCRETSİZ OYUN!*\n\n"
                 f"🕹 *Oyun:* {title}\n"
-                f"💰 *Eski Fiyat:* ~{fmt_original}~\n"
-                f"🔥 *Yeni Fiyat:* BEDAVA\n\n"
+                f"💰 *Eski Fiyat:* {fmt_original}\n"
                 f"📅 *Hemen kütüphanene eklemeyi unutma!*"
             )
-            send_telegram(msg, link)
+            
+            send_telegram_photo(msg, link, image_url)
 
-def send_telegram(message, game_url):
+def send_telegram_photo(message, game_url, image_url):
     token = os.environ['TELEGRAM_TOKEN']
     chat_id = os.environ['TELEGRAM_CHAT_ID']
     
-    # Buton yapısı
     reply_markup = {
         "inline_keyboard": [[
             {"text": "🚀 Oyunu Kütüphanene Ekle", "url": game_url}
         ]]
     }
     
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    # Fotoğraflı mesaj gönderme
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
     payload = {
         'chat_id': chat_id,
-        'text': message,
+        'photo': image_url,
+        'caption': message,
         'parse_mode': 'Markdown',
         'reply_markup': json.dumps(reply_markup)
     }
