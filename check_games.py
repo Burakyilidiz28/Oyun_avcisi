@@ -91,4 +91,26 @@ def check_other_platforms():
             
             # Resim yoksa sadece mesaj gönderir
             if send_telegram(msg, link, ""):
-                save_sent_game(game_id
+                save_sent_game(game_id)
+
+def send_telegram(message, game_url, image_url):
+    token = os.environ['TELEGRAM_TOKEN']
+    chat_id = os.environ['TELEGRAM_CHAT_ID']
+    reply_markup = {"inline_keyboard": [[{"text": "📖 Oyunu Kütüphanene Ekle", "url": game_url}]]}
+    
+    try:
+        if image_url:
+            url = f"https://api.telegram.org/bot{token}/sendPhoto"
+            payload = {'chat_id': chat_id, 'photo': image_url, 'caption': message, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(reply_markup)}
+        else:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload = {'chat_id': chat_id, 'text': message, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(reply_markup)}
+        
+        r = requests.post(url, data=payload)
+        return r.status_code == 200
+    except:
+        return False
+
+if __name__ == "__main__":
+    check_epic()
+    check_other_platforms()
