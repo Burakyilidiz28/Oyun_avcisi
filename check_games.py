@@ -3,7 +3,6 @@ import os
 import json
 import re
 from datetime import datetime
-import time
 
 SENT_GAMES_FILE = "sent_games.txt"
 
@@ -67,16 +66,16 @@ def parse_old_data():
                 if id_m: games.append({"full_line": line.strip(), "id": id_m.group(1)})
     return games, total_tl, total_usd
 
-def update_txt_report(games, statuses, total_tl, total_usd, reddit_titles):
+def update_txt_report(games, statuses, total_tl, total_usd, titles):
     with open(SENT_GAMES_FILE, "w", encoding="utf-8") as f:
         f.write(f"--- 💰 TOPLAM TASARRUF ---\n{total_tl:.2f} TL\n${total_usd:.2f}\n\n")
         f.write("--- 🏆 BUGÜNE KADAR BULUNAN OYUNLAR ---\n")
         for g in games: f.write(f"{g['full_line']}\n")
         f.write(f"\n--- 🔍 SON TARAMA BİLGİSİ ---\nSon Tarama Zamanı: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n\n")
         for p, s in statuses.items(): f.write(f"{p}: {s}\n")
-        f.write("\n--- 📝 REDDIT'TEN OKUNAN SON BAŞLIKLAR (HAM VERİ) ---\n")
-        if not reddit_titles: f.write("Veri okunamadı (403 Devam ediyor).\n")
-        for t in reddit_titles: f.write(f"- {t}\n")
+        f.write("\n--- 📝 REDDIT'TEN OKUNAN SON BAŞLIKLAR (RSS KÖPRÜSÜ) ---\n")
+        if not titles: f.write("Hic baslik bulunamadi.\n")
+        for t in titles: f.write(f"- {t}\n")
 
 # ---------------- SCANNER ----------------
 
@@ -84,9 +83,9 @@ def check_games():
     existing_games, total_tl, total_usd = parse_old_data()
     existing_ids = [g["id"] for g in existing_games]
     statuses = {"Epic Games": "❌", "Steam": "❌"}
-    reddit_titles = []
+    raw_titles = []
     
-    # 1. EPIC GAMES
+    # 1. EPIC GAMES (Sorunsuz Calisiyor)
     try:
         res = requests.get("https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=tr&country=TR", timeout=10).json()
         for game in res['data']['Catalog']['searchStore']['elements']:
@@ -104,41 +103,25 @@ def check_games():
                     statuses["Epic Games"] = "✅"
     except: statuses["Epic Games"] = "⚠️"
 
-    # 2. REDDIT (ZIRHLI BAĞLANTI)
+    # 2. REDDIT (RSS KÖPRÜSÜ - 403 HATASINI ASAR)
     try:
-        session = requests.Session()
-        # Reddit'in 403 atmasını zorlaştıran zırhlı başlıklar
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1"
-        })
+        # Reddit'in RSS beslemesini JSON'a ceviren ucretsiz bir servis kullanıyoruz
+        rss_url = "https://www.reddit.com/r/FreeGameFindings/new.rss"
+        api_url = f"https://api.rss2json.com/v1/api.json?rss_url={rss_url}"
         
-        # Önce ana sayfaya bir 'vuruş' yapıp çerez alalım (isteğe bağlı ama etkili)
-        session.get("https://www.reddit.com", timeout=10)
-        time.sleep(2) # İnsan gibi bekle
-        
-        # Şimdi JSON verisini isteyelim
-        res = session.get("https://www.reddit.com/r/FreeGameFindings/new.json?limit=20", timeout=15)
-        
+        res = requests.get(api_url, timeout=15)
         if res.status_code == 200:
-            posts = res.json().get("data", {}).get("children", [])
+            data = res.json()
             reddit_ok = False
-            for post in posts:
-                title_raw = post["data"]["title"]
-                reddit_titles.append(title_raw)
+            for item in data.get("items", []):
+                title_raw = item.get("title", "")
+                raw_titles.append(title_raw)
                 
                 t_up = title_raw.upper()
                 keywords = ["FREE", "100%", "GIVEAWAY", "PRIME", "COMPLIMENTARY", "PSA", "AMAZON"]
                 if any(k in t_up for k in keywords):
-                    game_id = f"reddit_{post['data']['id']}"
+                    # RSS'de ID olarak linki veya guid'i kullanabiliriz
+                    game_id = f"rss_{item.get('guid', '').split('/')[-1]}"
                     if game_id in existing_ids: continue
 
                     img = get_epic_image(title_raw)
@@ -147,18 +130,19 @@ def check_games():
                         if p in t_up: platform = p.capitalize(); break
 
                     msg = f"**[{escape_md(title_raw)}]**\n\n💰 Fiyatı: *Ücretsiz*\n🎮 Platform: *{escape_md(platform)}*\n\n👇 Hemen Al"
-                    if send_telegram(msg, post["data"]["url"], platform, img):
+                    # RSS item linki genellikle Reddit konusuna gider
+                    if send_telegram(msg, item.get("link", ""), platform, img):
                         existing_games.append({"full_line": f"{title_raw} | 0.00 $ (ID:{game_id}) [{datetime.now().strftime('%d-%m-%Y')}]", "id": game_id})
                         reddit_ok = True
             statuses["Steam"] = "✅" if reddit_ok else "❌"
         else:
-            reddit_titles.append(f"HATA: {res.status_code}")
+            raw_titles.append(f"RSS Servis Hatasi: {res.status_code}")
             statuses["Steam"] = "⚠️"
     except Exception as e:
-        reddit_titles.append(f"HATA: {str(e)}")
+        raw_titles.append(f"Baglanti Hatasi: {str(e)}")
         statuses["Steam"] = "⚠️"
 
-    update_txt_report(existing_games, statuses, total_tl, total_usd, reddit_titles)
+    update_txt_report(existing_games, statuses, total_tl, total_usd, raw_titles)
 
 if __name__ == "__main__":
     check_games()
