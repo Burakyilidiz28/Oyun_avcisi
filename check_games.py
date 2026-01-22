@@ -18,7 +18,7 @@ def get_epic_image(game_name):
     try:
         res = requests.get(search_url, timeout=7).json()
         elements = res['data']['Catalog']['searchStore']['elements']
-        if elements:
+        if elements and len(elements) > 0:
             for img in elements[0].get('keyImages', []):
                 if img.get('type') in ['OfferImageWide', 'Thumbnail', 'DieselStoreFrontWide']:
                     return img.get('url')
@@ -56,11 +56,10 @@ def parse_old_data():
     if os.path.exists(SENT_GAMES_FILE):
         with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
             content = f.read()
-            tl_match = re.search(r"([\d.]+) TL", content)
-            usd_match = re.search(r"\$([\d.]+)", content)
-            if tl_match: total_tl = float(tl_match.group(1))
-            if usd_match: total_usd = float(usd_match.group(1))
-            
+            tl_m = re.search(r"([\d.]+) TL", content)
+            usd_m = re.search(r"\$([\d.]+)", content)
+            if tl_m: total_tl = float(tl_m.group(1))
+            if usd_m: total_usd = float(usd_m.group(1))
             f.seek(0)
             for line in f:
                 id_m = re.search(r"\(ID:(.*?)\)", line)
@@ -72,16 +71,11 @@ def update_txt_report(games, statuses, total_tl, total_usd, reddit_raw_titles):
         f.write(f"--- 💰 TOPLAM TASARRUF ---\n{total_tl:.2f} TL\n${total_usd:.2f}\n\n")
         f.write("--- 🏆 BUGÜNE KADAR BULUNAN OYUNLAR ---\n")
         for g in games: f.write(f"{g['full_line']}\n")
-        
         f.write(f"\n--- 🔍 SON TARAMA BİLGİSİ ---\nSon Tarama Zamanı: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n\n")
         for p, s in statuses.items(): f.write(f"{p}: {s}\n")
-        
-        # SİTEYE GİRİP GİRMEDİĞİNİ ANLAMAK İÇİN HAM VERİ LOGU
         f.write("\n--- 📝 REDDIT'TEN OKUNAN SON BAŞLIKLAR (HAM VERİ) ---\n")
-        if not reddit_raw_titles:
-            f.write("Veri okunamadı veya Reddit engelledi.\n")
-        for title in reddit_raw_titles:
-            f.write(f"- {title}\n")
+        if not reddit_raw_titles: f.write("Veri okunamadı.\n")
+        for title in reddit_raw_titles: f.write(f"- {title}\n")
 
 # ---------------- SCANNER ----------------
 
@@ -89,9 +83,9 @@ def check_games():
     existing_games, total_tl, total_usd = parse_old_data()
     existing_ids = [g["id"] for g in existing_games]
     statuses = {"Epic Games": "❌", "Steam": "❌"}
-    reddit_raw_titles = [] # Ham başlıkları burada tutacağız
+    reddit_raw_titles = []
     
-    # 1. EPIC GAMES
+    # 1. EPIC (Stabil)
     try:
         res = requests.get("https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=tr&country=TR", timeout=10).json()
         elements = res['data']['Catalog']['searchStore']['elements']
@@ -111,17 +105,22 @@ def check_games():
                     statuses["Epic Games"] = "✅"
     except: statuses["Epic Games"] = "⚠️"
 
-    # 2. REDDIT (GELİŞTİRİLMİŞ LOGLAMA)
+    # 2. REDDIT (403 HATASI ÇÖZÜMÜ: OLD REDDIT JSON)
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
-        res = requests.get("https://www.reddit.com/r/FreeGameFindings/new.json?sort=new&limit=20", headers=headers, timeout=15)
+        # User-Agent'ı Reddit'in sevdiği bir mobil tarayıcı gibi gösteriyoruz
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+            "Accept": "application/json"
+        }
+        # old.reddit üzerinden JSON çekmek 403 engelini genellikle aşar
+        res = requests.get("https://old.reddit.com/r/FreeGameFindings/new.json?limit=20", headers=headers, timeout=15)
         
         if res.status_code == 200:
             posts = res.json().get("data", {}).get("children", [])
             reddit_success = False
             for post in posts:
                 title_raw = post["data"]["title"]
-                reddit_raw_titles.append(title_raw) # LOGA EKLE
+                reddit_raw_titles.append(title_raw)
                 
                 t_up = title_raw.upper()
                 keywords = ["FREE", "100%", "GIVEAWAY", "PRIME", "COMPLIMENTARY", "PSA", "AMAZON"]
@@ -140,7 +139,7 @@ def check_games():
                         reddit_success = True
             statuses["Steam"] = "✅" if reddit_success else "❌"
         else:
-            reddit_raw_titles.append(f"HATA: Reddit {res.status_code} koduyla reddetti.")
+            reddit_raw_titles.append(f"HATA: {res.status_code}")
             statuses["Steam"] = "⚠️"
     except Exception as e:
         reddit_raw_titles.append(f"BAGLANTI HATASI: {str(e)}")
