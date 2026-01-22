@@ -6,10 +6,10 @@ $0.00
 Rustler - Grand Theft Horse | 349.00 TL (ID:epic_3d10f32b87b94b769524cd44a12e634a) [22-01-2026]
 
 --- 🔍 SON TARAMA BİLGİSİ ---
-Son Tarama Zamanı: 22-01-2026 19:10
+Son Tarama Zamanı: 22-01-2026 19:11
 
 Epic Games: ❌
 Steam: ⚠️
 
 --- 📝 REDDIT'TEN OKUNAN SON BAŞLIKLAR (HAM VERİ) ---
-- HATA: Reddit 403 koduyla reddetti.
+- HATA: 403
