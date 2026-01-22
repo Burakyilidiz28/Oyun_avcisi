@@ -1,115 +1,147 @@
-import requests, os, json, re
+import requests
+import os
+import json
+import re
 from datetime import datetime
 
-FILE = "sent_games.txt"
+# Dosya isimleri
+SENT_GAMES_FILE = "sent_games.txt"
+LOG_FILE = "bot_logs.txt"
 
-# ---------- UTILS ----------
+def write_log(message):
+    """İşlemleri log dosyasına tarihle kaydeder."""
+    now = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    log_entry = f"[{now}] {message}\n"
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(log_entry)
+    print(log_entry.strip())
 
-def esc(t):
-    return re.sub(r'([_*[\]()~`>#+\-=|{}.!])', r'\\\1', t)
+def get_sent_games():
+    """Dosya içindeki (ID:...) formatındaki ID'leri ayıklar."""
+    if not os.path.exists(SENT_GAMES_FILE):
+        return []
+    with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
+        content = f.read()
+        # Düzenli ifade (regex) ile ID'leri yakalar
+        return re.findall(r"\(ID:(.*?)\)", content)
 
-# ---------- TELEGRAM ----------
+def add_to_sent_games(game_id, title, original_price_raw):
+    """Dosyayı yeni formatta günceller ve toplam kazancı hesaplar."""
+    lines = []
+    total_gain = 0.0
+    games_list = []
+    new_price = float(original_price_raw / 100)
 
-def tg(msg, url, img):
-    tok = os.getenv("TELEGRAM_TOKEN")
-    cid = os.getenv("TELEGRAM_CHAT_ID")
-    if not tok or not cid:
-        return False
+    if os.path.exists(SENT_GAMES_FILE):
+        with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
 
-    kb = {"inline_keyboard":[[{"text":"🎮 Kütüphanene Ekle [Epic Games]","url":url}]]}
-    api = f"https://api.telegram.org/bot{tok}/sendPhoto"
+    # Mevcut toplam kazancı ve oyun listesini ayıkla
+    current_section = ""
+    for i, line in enumerate(lines):
+        if "--- 💰 TOPLAM KAZANÇ ---" in line:
+            if i + 1 < len(lines):
+                try:
+                    total_gain = float(lines[i+1].replace(" TL", "").strip())
+                except: total_gain = 0.0
+        elif "|" in line and "(ID:" in line:
+            games_list.append(line.strip())
 
-    data = {
-        "chat_id": cid,
-        "photo": img,
-        "caption": msg,
-        "parse_mode": "MarkdownV2",
-        "reply_markup": json.dumps(kb)
-    }
+    # Verileri güncelle
+    total_gain += new_price
+    now_date = datetime.now().strftime("%d-%m-%Y")
+    new_game_entry = f"{title} | {new_price:.2f} TL (ID:{game_id}) [{now_date}]"
+    games_list.append(new_game_entry)
 
-    try:
-        return requests.post(api, data=data, timeout=10).status_code == 200
-    except:
-        return False
-
-# ---------- STORAGE ----------
-
-def load():
-    games, ids = [], set()
-    if not os.path.exists(FILE):
-        return games, ids
-
-    with open(FILE, "r", encoding="utf-8") as f:
-        for l in f:
-            m = re.search(r"\(ID:(.*?)\)", l)
-            if m:
-                ids.add(m.group(1))
-                games.append(l.strip())
-    return games, ids
-
-def save(games, status):
-    total = 0.0
-    for g in games:
-        m = re.search(r"\| ([\d.]+) TL", g)
-        if m:
-            total += float(m.group(1))
-
-    with open(FILE, "w", encoding="utf-8") as f:
-        f.write("--- 🏆 BULUNAN OYUNLAR ---\n")
-        for g in games:
+    # Dosyayı baştan yarat
+    with open(SENT_GAMES_FILE, "w", encoding="utf-8") as f:
+        f.write("--- 💰 TOPLAM KAZANÇ ---\n")
+        f.write(f"{total_gain:.2f} TL\n\n")
+        f.write("--- 🏆 BUGÜNE KADAR BULUNAN OYUNLAR ---\n")
+        for g in games_list:
             f.write(g + "\n")
 
-        f.write("\n--- 💰 TOPLAM TASARRUF ---\n")
-        f.write(f"{total:.2f} TL\n")
-
-        f.write("\n--- 🔍 PLATFORM DURUMU ---\n")
-        f.write(f"Epic Games: {status}\n")
-        f.write(f"\nSon Tarama: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n")
-
-# ---------- EPIC ----------
-
-def check():
-    games, ids = load()
-    new = False
-
+def check_epic():
+    write_log("--- Kontrol Başlatıldı ---")
+    url = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=tr&country=TR&allowCountries=TR"
+    
     try:
-        url = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=tr&country=TR"
-        res = requests.get(url, timeout=10).json()
-        els = res["data"]["Catalog"]["searchStore"]["elements"]
+        response = requests.get(url).json()
+        games = response['data']['Catalog']['searchStore']['elements']
+    except Exception as e:
+        write_log(f"HATA: API bağlantısı kurulamadı: {e}")
+        return
 
-        for g in els:
-            p = g.get("price", {}).get("totalPrice", {})
-            if p.get("discountPrice") != 0 or not g.get("promotions"):
-                continue
+    sent_games = get_sent_games()
+    found_any = False
+    
+    # Tarihleri Türkçeleştirmek için sözlükler
+    gunler = {"Monday": "Pazartesi", "Tuesday": "Salı", "Wednesday": "Çarşamba", "Thursday": "Perşembe", "Friday": "Cuma", "Saturday": "Cumartesi", "Sunday": "Pazar"}
+    aylar = {"January": "Ocak", "February": "Şubat", "March": "Mart", "April": "Nisan", "May": "Mayıs", "June": "Haziran", "July": "Temmuz", "August": "Ağustos", "September": "Eylül", "October": "Ekim", "November": "Kasım", "December": "Aralık"}
 
-            gid = f"epic_{g['id']}"
-            if gid in ids:
-                continue
+    for game in games:
+        try:
+            price_info = game['price']['totalPrice']
+            # Sadece ücretsiz (0 TL) ve aktif promosyonu olanları al
+            if price_info['discountPrice'] == 0 and game.get('promotions') and game['promotions']['promotionalOffers']:
+                
+                game_id = game['id']
+                title = game['title']
 
-            title = g["title"]
-            price = p.get("originalPrice", 0) / 100
-            img = next((i["url"] for i in g.get("keyImages", [])
-                        if i["type"] in ["OfferImageWide","Thumbnail"]), "")
+                if game_id in sent_games:
+                    write_log(f"Atlandı (Zaten gönderildi): {title}")
+                    continue
 
-            msg = (
-                f"*{esc(title)}*\n\n"
-                f"💰 Fiyatı: *{price:.2f} TL*\n"
-                f"⏰ Sınırlı Süre Ücretsiz"
-            )
-
-            if img and tg(msg, "https://store.epicgames.com/tr/free-games", img):
-                games.append(
-                    f"{title} | {price:.2f} TL (ID:{gid}) [{datetime.now().strftime('%d-%m-%Y')}]"
+                found_any = True
+                promo_info = game['promotions']['promotionalOffers'][0]['promotionalOffers'][0]
+                end_date_str = promo_info['endDate']
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+                
+                bitis_metni = f"{end_date.strftime('%d')} {aylar[end_date.strftime('%B')]} {end_date.strftime('%H:%M')} ({gunler[end_date.strftime('%A')]})"
+                image_url = next((img['url'] for img in game.get('keyImages', []) if img.get('type') in ['Thumbnail', 'OfferImageWide']), "")
+                
+                slug = game.get('urlSlug', "free-games")
+                if game.get('catalogNs', {}).get('mappings'):
+                    slug = game['catalogNs']['mappings'][0]['pageSlug']
+                
+                link = f"https://store.epicgames.com/tr/p/{slug}"
+                fmt_original = f"{price_info['originalPrice']/100:.2f} TL"
+                
+                msg = (
+                    f"🎮 *{title}*\n\n"
+                    f"💰 **Orijinal Fiyat:** {fmt_original}\n"
+                    f"⌛ **Son Tarih:** {bitis_metni}\n\n"
+                    f"👇 *Hemen Kütüphanene Ekle*"
                 )
-                ids.add(gid)
-                new = True
+                
+                if send_telegram_photo(msg, link, image_url):
+                    add_to_sent_games(game_id, title, price_info['originalPrice'])
+                    write_log(f"BAŞARILI: {title} gönderildi ve dosyaya işlendi.")
+                else:
+                    write_log(f"HATA: {title} gönderilirken Telegram hatası oluştu.")
 
-        save(games, "✅" if new else "❌")
+        except Exception as e:
+            write_log(f"HATA: Oyun işlenirken hata oluştu: {e}")
+            continue
+            
+    if not found_any:
+        write_log("Bilgi: Şu an yeni bir ücretsiz oyun bulunamadı.")
+    write_log("--- Kontrol Bitti ---")
 
+def send_telegram_photo(message, game_url, image_url):
+    token = os.environ.get('TELEGRAM_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+    if not token or not chat_id: return False
+    
+    reply_markup = {"inline_keyboard": [[{"text": "📖 Oyunu Al", "url": game_url}]]}
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    payload = {'chat_id': chat_id, 'photo': image_url, 'caption': message, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(reply_markup)}
+    
+    try:
+        r = requests.post(url, data=payload)
+        return r.status_code == 200
     except:
-        save(games, "⚠️")
-
-# ---------- MAIN ----------
+        return False
 
 if __name__ == "__main__":
-    check()
+    check_epic()
