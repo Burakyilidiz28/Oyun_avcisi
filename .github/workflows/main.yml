@@ -1,8 +1,8 @@
 name: Epic Games Check
 on:
   schedule:
-    - cron: '10 16 * * 4' # Her Perşembe Türkiye saatiyle 19:10'da çalışır
-  workflow_dispatch: # Elinle test etmek istersen diye
+    - cron: '10 16 * * 4' # Her Perşembe TSİ 19:10
+  workflow_dispatch: # Manuel kontrol butonu
 
 jobs:
   build:
