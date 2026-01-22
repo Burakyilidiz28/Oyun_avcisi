@@ -31,12 +31,9 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           
-          # Dosyalar yoksa oluştur (hata önlemek için)
+          # Eksik dosyaları oluştur ve takibe al
           touch sent_games.txt bot_logs.txt
-          
-          # ÖNEMLİ: Her iki dosyayı da ekle
           git add sent_games.txt bot_logs.txt
           
-          # Eğer dosyalarda bir değişiklik varsa commit ve push yap
-          # Değişiklik yoksa hata vermeden geç
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update logs and games [$(date '+%d-%m-%Y %H:%M')]" && git push)
+          # Değişiklik varsa commit yap, yoksa sessizce bitir
+          git diff --staged --quiet || (git commit -m "Update logs and games [$(date '+%d-%m-%Y %H:%M')]" && git push)
