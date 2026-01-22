@@ -22,7 +22,6 @@ def get_sent_games():
         return []
     with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
         content = f.read()
-        # Düzenli ifade (regex) ile ID'leri yakalar
         return re.findall(r"\(ID:(.*?)\)", content)
 
 def add_to_sent_games(game_id, title, original_price_raw):
@@ -36,12 +35,10 @@ def add_to_sent_games(game_id, title, original_price_raw):
         with open(SENT_GAMES_FILE, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
-    # Mevcut toplam kazancı ve oyun listesini ayıkla
     for i, line in enumerate(lines):
         if "--- 💰 TOPLAM KAZANÇ ---" in line:
             if i + 1 < len(lines):
                 try:
-                    # Sadece rakamı çekmek için TL ve boşlukları temizle
                     price_str = lines[i+1].replace(" TL", "").strip()
                     total_gain = float(price_str)
                 except: 
@@ -49,13 +46,11 @@ def add_to_sent_games(game_id, title, original_price_raw):
         elif "|" in line and "(ID:" in line:
             games_list.append(line.strip())
 
-    # Verileri güncelle
     total_gain += new_price
     now_date = datetime.now().strftime("%d-%m-%Y")
     new_game_entry = f"{title} | {new_price:.2f} TL (ID:{game_id}) [{now_date}]"
     games_list.append(new_game_entry)
 
-    # sent_games.txt dosyasını baştan yarat
     with open(SENT_GAMES_FILE, "w", encoding="utf-8") as f:
         f.write("--- 💰 TOPLAM KAZANÇ ---\n")
         f.write(f"{total_gain:.2f} TL\n\n")
@@ -77,20 +72,17 @@ def check_epic():
     sent_games = get_sent_games()
     found_any = False
     
-    # Tarihleri Türkçeleştirmek için sözlükler
     gunler = {"Monday": "Pazartesi", "Tuesday": "Salı", "Wednesday": "Çarşamba", "Thursday": "Perşembe", "Friday": "Cuma", "Saturday": "Cumartesi", "Sunday": "Pazar"}
     aylar = {"January": "Ocak", "February": "Şubat", "March": "Mart", "April": "Nisan", "May": "Mayıs", "June": "Haziran", "July": "Temmuz", "August": "Ağustos", "September": "Eylül", "October": "Ekim", "November": "Kasım", "December": "Aralık"}
 
     for game in games:
         try:
             price_info = game['price']['totalPrice']
-            # Sadece 0 TL olan ve promosyonu olan oyunlar
             if price_info['discountPrice'] == 0 and game.get('promotions') and game['promotions']['promotionalOffers']:
                 
                 game_id = game['id']
                 title = game['title']
 
-                # Daha önce gönderildi mi?
                 if game_id in sent_games:
                     write_log(f"Atlandı (Zaten gönderildi): {title}")
                     continue
@@ -98,16 +90,11 @@ def check_epic():
                 found_any = True
                 promo_info = game['promotions']['promotionalOffers'][0]['promotionalOffers'][0]
                 end_date_str = promo_info['endDate']
-                
-                # Tarih ayrıştırma (ISO formatı için)
                 end_date = datetime.strptime(end_date_str.split('.')[0], "%Y-%m-%dT%H:%M:%S")
                 
                 bitis_metni = f"{end_date.strftime('%d')} {aylar[end_date.strftime('%B')]} {end_date.strftime('%H:%M')} ({gunler[end_date.strftime('%A')]})"
-                
-                # Resim URL'sini bul
                 image_url = next((img['url'] for img in game.get('keyImages', []) if img.get('type') in ['Thumbnail', 'OfferImageWide', 'DieselStoreFrontWide']), "")
                 
-                # Slug/Link oluşturma
                 slug = game.get('urlSlug', "free-games")
                 if game.get('catalogNs', {}).get('mappings') and len(game['catalogNs']['mappings']) > 0:
                     slug = game['catalogNs']['mappings'][0]['pageSlug']
@@ -122,10 +109,9 @@ def check_epic():
                     f"👇 *Hemen Kütüphanene Ekle*"
                 )
                 
-                # Telegram'a gönder ve başarılıysa dosyayı güncelle
                 if send_telegram_photo(msg, link, image_url):
                     add_to_sent_games(game_id, title, price_info['originalPrice'])
-                    write_log(f"BAŞARILI: {title} gönderildi ve muhasebe güncellendi.")
+                    write_log(f"BAŞARILI: {title} gönderildi ve kayıtlar güncellendi.")
                 else:
                     write_log(f"HATA: {title} gönderilirken Telegram hatası oluştu.")
 
@@ -134,31 +120,22 @@ def check_epic():
             continue
             
     if not found_any:
-        write_log("Bilgi: Şu an paylaşılacak yeni bir ücretsiz oyun yok.")
+        write_log("Bilgi: Paylaşılacak yeni oyun bulunamadı.")
     write_log("--- Kontrol Bitti ---")
 
 def send_telegram_photo(message, game_url, image_url):
     token = os.environ.get('TELEGRAM_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-    if not token or not chat_id:
-        print("HATA: Telegram Token veya Chat ID eksik!")
-        return False
+    if not token or not chat_id: return False
     
     reply_markup = {"inline_keyboard": [[{"text": "📖 Oyunu Kütüphanene Ekle", "url": game_url}]]}
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
-    payload = {
-        'chat_id': chat_id, 
-        'photo': image_url, 
-        'caption': message, 
-        'parse_mode': 'Markdown', 
-        'reply_markup': json.dumps(reply_markup)
-    }
+    payload = {'chat_id': chat_id, 'photo': image_url, 'caption': message, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(reply_markup)}
     
     try:
         r = requests.post(url, data=payload)
         return r.status_code == 200
-    except Exception as e:
-        print(f"Telegram Post Hatası: {e}")
+    except:
         return False
 
 if __name__ == "__main__":
